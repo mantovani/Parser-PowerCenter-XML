@@ -93,16 +93,13 @@ sub mapping {
         if ( ref $target ) {
             push @struct,
               {
-                source => {
-                    map { $_ => $source->{$_} } grep { /^FROM/ } keys %{$source}
+                source_field => $source->{FROMFIELD},
+                %{
+                    $self->source_struct( $source->{FROMINSTANCE},
+                        $map, $source->{FROMFIELD} )
                 },
-                source_infs =>
-                  $self->source_struct( $source->{FROMINSTANCE}, $map ),
-                target => {
-                    map { $_ => $target->{$_} } grep { /^TO/ } keys %{$target}
-                },
-                target_infs =>
-                  $self->target_struct( $target->{TOINSTANCE}, $map )
+                target_physical_column => $target->{TOFIELD},
+                %{ $self->target_struct( $target->{TOINSTANCE}, $map ) }
               };
         }
     }
@@ -136,14 +133,33 @@ and \@FROMINSTANCETYPE="$type"]}
 }
 
 sub source_struct {
-    my ( $self, $inst, $map ) = @_;
-    if ( !$self->cache->{source_kind}->{ $map->{att}->{NAME} }->{$inst} ) {
-        my ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$inst"]});
-        $self->cache->{source_kind}->{ $map->{att}->{NAME} }->{$inst} =
-          $source->{att};
+    my ( $self, $inst, $map, $field_name ) = @_;
 
+    my ($get_real_inst) = $map->findnodes(qq{//INSTANCE[\@NAME]});
+    my $real_inst       = $get_real_inst->{att}->{TRANSFORMATION_NAME};
+    my ($source)        = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
+
+    unless ($source) {
+        print "#" x 20;
+        print "\n";
+        print Dumper $map->{att};
+        print "\n{$inst => $field_name}\n";
+        print "#" x 20;
+        print "\n";
     }
-    return $self->cache->{source_kind}->{ $map->{att}->{NAME} }->{$inst};
+
+    my ($column) = $source->findnodes(qq{.//SOURCEFIELD[\@NAME="$field_name"]});
+    my $table_name = $self->map_instance( $map, $inst, $self->source );
+
+    my %struct = (
+        source_database       => $source->{att}->{DBDNAME},
+        source_owner          => $source->{att}->{OWNERNAME},
+        source_type           => $source->{att}->{DATABASETYPE},
+        source_database       => $source->{att}->{DBDNAME},
+        source_datatype       => $column->{att}->{DATATYPE},
+        source_physical_table => $table_name
+    );
+    return \%struct;
 }
 
 sub target_struct {
@@ -154,29 +170,37 @@ sub target_struct {
 
     if ( !$self->cache->{$map_name}->{$inst} ) {
         $infs = $self->target_map($inst);
-        $table_name = $self->map_instance( $map, $inst );
-        $self->cache->{$map_name}->{$inst}->{infs}       = $infs;
-        $self->cache->{$map_name}->{$inst}->{table_name} = $table_name;
+        $table_name = $self->map_instance( $map, $inst, $self->target );
+        $self->cache->{$map_name}->{$inst}->{source_database} = $infs;
+        $self->cache->{$map_name}->{$inst}->{target_physical_table} =
+          $table_name;
     }
     else {
-        $infs       = $self->cache->{$map_name}->{$inst}->{infs};
-        $table_name = $self->cache->{$map_name}->{$inst}->{table_name};
+        $infs = $self->cache->{$map_name}->{$inst}->{source_database};
+        $table_name =
+          $self->cache->{$map_name}->{$inst}->{target_physical_table};
     }
 
     return {
-        repository => $self->get_repository,
-        folder     => $self->get_folder,
-        db_type    => $infs->{db},
-        conn       => $infs->{conn},
-        table_name => $table_name,
-        map_name   => $map_name,
+        repository            => $self->get_repository,
+        folder                => $self->get_folder,
+        db_type               => $infs->{database},
+        conn                  => $infs->{connection},
+        target_physical_table => $table_name,
+        load_program          => $map_name,
     };
 }
 
 sub map_instance {
-    my ( $self, $map, $inst_name ) = @_;
-    my ($table_name) = $map->findnodes(qq{//INSTANCE[\@NAME="$inst_name"]});
-    return $table_name->{att}->{TRANSFORMATION_NAME};
+    my ( $self, $map, $inst_name, $type ) = @_;
+    my ($table_name) = $map->findnodes(
+        qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]});
+    my ($tb) = $table_name->findnodes('./TABLEATTRIBUTE');
+
+    if ($tb) { return $tb->{att}->{VALUE} }
+    else {
+        return $table_name->{att}->{TRANSFORMATION_NAME};
+    }
 }
 
 sub target_map {
@@ -187,8 +211,8 @@ sub target_map {
 qq{//SESSION/SESSIONEXTENSION[\@TRANSFORMATIONTYPE="$target_type" and \@SINSTANCENAME="$map_name"]/CONNECTIONREFERENCE}
       );
     return {
-        db   => $meta_infs->{att}->{CONNECTIONSUBTYPE},
-        conn => $meta_infs->{att}->{CONNECTIONNAME}
+        database   => $meta_infs->{att}->{CONNECTIONSUBTYPE},
+        connection => $meta_infs->{att}->{CONNECTIONNAME}
     };
 }
 
