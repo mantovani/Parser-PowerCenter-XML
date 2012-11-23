@@ -135,18 +135,18 @@ and \@FROMINSTANCETYPE="$type"]}
 sub source_struct {
     my ( $self, $inst, $map, $field_name ) = @_;
 
-    my ($get_real_inst) = $map->findnodes(qq{//INSTANCE[\@NAME]});
-    my $real_inst       = $get_real_inst->{att}->{TRANSFORMATION_NAME};
-    my ($source)        = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
-
-    unless ($source) {
-        print "#" x 20;
-        print "\n";
-        print Dumper $map->{att};
-        print "\n{$inst => $field_name}\n";
-        print "#" x 20;
-        print "\n";
+    if ( !$self->cache->{source_struct}->{source}->{ $map->{att}->{NAME} }
+        ->{$inst} )
+    {
+        my ($get_real_inst) = $map->findnodes(qq{//INSTANCE[\@NAME="$inst"]});
+        my $real_inst = $get_real_inst->{att}->{TRANSFORMATION_NAME};
+        my ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
+        $self->cache->{source_struct}->{source}->{ $map->{att}->{NAME} }
+          ->{$inst} = $source;
     }
+
+    my $source =
+      $self->cache->{source_struct}->{source}->{ $map->{att}->{NAME} }->{$inst};
 
     my ($column) = $source->findnodes(qq{.//SOURCEFIELD[\@NAME="$field_name"]});
     my $table_name = $self->map_instance( $map, $inst, $self->source );
@@ -168,17 +168,21 @@ sub target_struct {
     my $map_name = $map->{att}->{NAME};
     my ( $infs, $table_name );
 
-    if ( !$self->cache->{$map_name}->{$inst} ) {
+    if ( !$self->cache->{target_struct}->{$map_name}->{$inst} ) {
         $infs = $self->target_map($inst);
         $table_name = $self->map_instance( $map, $inst, $self->target );
-        $self->cache->{$map_name}->{$inst}->{source_database} = $infs;
-        $self->cache->{$map_name}->{$inst}->{target_physical_table} =
-          $table_name;
+        $self->cache->{target_struct}->{$map_name}->{$inst}->{source_database}
+          = $infs;
+        $self->cache->{target_struct}->{$map_name}->{$inst}
+          ->{target_physical_table} = $table_name;
     }
     else {
-        $infs = $self->cache->{$map_name}->{$inst}->{source_database};
+        $infs =
+          $self->cache->{target_struct}->{$map_name}->{$inst}
+          ->{source_database};
         $table_name =
-          $self->cache->{$map_name}->{$inst}->{target_physical_table};
+          $self->cache->{target_struct}->{$map_name}->{$inst}
+          ->{target_physical_table};
     }
 
     return {
@@ -193,14 +197,20 @@ sub target_struct {
 
 sub map_instance {
     my ( $self, $map, $inst_name, $type ) = @_;
-    my ($table_name) = $map->findnodes(
-        qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]});
-    my ($tb) = $table_name->findnodes('./TABLEATTRIBUTE');
 
-    if ($tb) { return $tb->{att}->{VALUE} }
-    else {
-        return $table_name->{att}->{TRANSFORMATION_NAME};
+    if ( !$self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
+        ->{$type} )
+    {
+        my ($table_name) = $map->findnodes(
+qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]}
+        );
+
+        $self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
+          ->{$type} = $table_name->{att}->{TRANSFORMATION_NAME};
+
     }
+    return $self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
+      ->{$type};
 }
 
 sub target_map {
