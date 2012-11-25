@@ -86,11 +86,10 @@ sub mapping {
     my @source_cols =
       $map->findnodes(qq{.//CONNECTOR[\@FROMINSTANCETYPE="$source_type"]});
     foreach my $source_col (@source_cols) {
-        my ( $source, $target ) = (
-            $source_col->{att},
-            $self->recursive_mapping( $map, $source_col, $magic_map )
-        );
-        if ( ref $target ) {
+        my $source = $source_col->{att};
+        my $targets =
+          $self->recursive_mapping( $map, $source_col, $magic_map, [] );
+        foreach my $target ( @{$targets} ) {
             push @struct,
               {
                 source_field => $source->{FROMFIELD},
@@ -107,7 +106,7 @@ sub mapping {
 }
 
 sub recursive_mapping {
-    my ( $self, $map, $source_col, $magic_map ) = @_;
+    my ( $self, $map, $source_col, $magic_map, $array_ref ) = @_;
     if ( $source_col->{att}->{TOINSTANCETYPE} eq $self->target ) {
         return $source_col->{att};
     }
@@ -128,25 +127,26 @@ and \@FROMINSTANCETYPE="$type"]}
       )
     {
         my $result = $self->recursive_mapping( $map, $next_col, $magic_map );
-        return $result if $result;
+        if ( ref $result eq 'ARRAY' ) {
+            push @{$array_ref}, @{$result};
+        }
+        elsif ( ref $result eq 'HASH' ) {
+            push @{$array_ref}, $result;
+        }
     }
+    return $array_ref;
 }
 
 sub source_struct {
     my ( $self, $inst, $map, $field_name ) = @_;
 
-    if ( !$self->cache->{source_struct}->{source}->{ $map->{att}->{NAME} }
-        ->{$inst} )
-    {
-        my ($get_real_inst) = $map->findnodes(qq{//INSTANCE[\@NAME="$inst"]});
-        my $real_inst = $get_real_inst->{att}->{TRANSFORMATION_NAME};
-        my ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
-        $self->cache->{source_struct}->{source}->{ $map->{att}->{NAME} }
-          ->{$inst} = $source;
-    }
+    my ($get_real_inst) = $map->findnodes(qq{//INSTANCE[\@NAME="$inst"]});
+    my $real_inst       = $get_real_inst->{att}->{TRANSFORMATION_NAME};
+    my ($source)        = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
 
-    my $source =
-      $self->cache->{source_struct}->{source}->{ $map->{att}->{NAME} }->{$inst};
+    unless ($source) {
+        ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$inst"]});
+    }
 
     my ($column) = $source->findnodes(qq{.//SOURCEFIELD[\@NAME="$field_name"]});
     my $table_name = $self->map_instance( $map, $inst, $self->source );
@@ -164,27 +164,17 @@ sub source_struct {
 
 sub target_struct {
     my ( $self, $inst, $map ) = @_;
-
     my $map_name = $map->{att}->{NAME};
-    my ( $infs, $table_name );
-
     if ( !$self->cache->{target_struct}->{$map_name}->{$inst} ) {
-        $infs = $self->target_map($inst);
-        $table_name = $self->map_instance( $map, $inst, $self->target );
-        $self->cache->{target_struct}->{$map_name}->{$inst}->{source_database}
-          = $infs;
-        $self->cache->{target_struct}->{$map_name}->{$inst}
-          ->{target_physical_table} = $table_name;
+        $self->cache->{target_struct}->{$map_name}->{$inst}->{infs} =
+          $self->target_map($inst);
+        $self->cache->{target_struct}->{$map_name}->{$inst}->{table_name} =
+          $self->map_instance( $map, $inst, $self->target );
     }
-    else {
-        $infs =
-          $self->cache->{target_struct}->{$map_name}->{$inst}
-          ->{source_database};
-        $table_name =
-          $self->cache->{target_struct}->{$map_name}->{$inst}
-          ->{target_physical_table};
-    }
-
+    my ( $table_name, $infs ) = (
+        $self->cache->{target_struct}->{$map_name}->{$inst}->{table_name},
+        $self->cache->{target_struct}->{$map_name}->{$inst}->{infs}
+    );
     return {
         repository            => $self->get_repository,
         folder                => $self->get_folder,
@@ -197,20 +187,9 @@ sub target_struct {
 
 sub map_instance {
     my ( $self, $map, $inst_name, $type ) = @_;
-
-    if ( !$self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
-        ->{$type} )
-    {
-        my ($table_name) = $map->findnodes(
-qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]}
-        );
-
-        $self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
-          ->{$type} = $table_name->{att}->{TRANSFORMATION_NAME};
-
-    }
-    return $self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
-      ->{$type};
+    my ($table_name) = $map->findnodes(
+        qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]});
+    return $table_name->{att}->{TRANSFORMATION_NAME};
 }
 
 sub target_map {
