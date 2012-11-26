@@ -140,9 +140,12 @@ and \@FROMINSTANCETYPE="$type"]}
 sub source_struct {
     my ( $self, $inst, $map, $field_name ) = @_;
 
-    my ($get_real_inst) = $map->findnodes(qq{//INSTANCE[\@NAME="$inst"]});
-    my $real_inst       = $get_real_inst->{att}->{TRANSFORMATION_NAME};
-    my ($source)        = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
+    my $source_type = $self->source;
+    my ($get_real_inst) = $map->findnodes(
+        qq{//INSTANCE[\@NAME="$inst" and \@TRANSFORMATION_TYPE="$source_type"]}
+    );
+    my $real_inst = $get_real_inst->{att}->{TRANSFORMATION_NAME};
+    my ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
 
     unless ($source) {
         ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$inst"]});
