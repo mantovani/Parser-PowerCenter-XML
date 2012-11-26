@@ -72,7 +72,7 @@ sub get_infs {
     my ( $source_type, $target_type ) = ( $self->source, $self->target );
     my @struct;
     foreach my $map (@maps) {
-        my $map_name = $map->{att}->{NAME};
+        my $map_name  = $map->{att}->{NAME};
         my $magic_map = $self->transformation_magic($map);
         push @struct, [ $map_name, @{ $self->mapping( $map, $magic_map ) } ];
     }
@@ -118,7 +118,7 @@ sub mapping {
                 target_physical_column => $target->{TOFIELD},
                 %{ $self->target_struct( $target->{TOINSTANCE}, $map ) },
                 workflow            => $workflow,
-                transformation_rule => $target->{trans},
+                transformation_flow => $target->{trans},
               };
         }
     }
@@ -127,7 +127,10 @@ sub mapping {
 
 sub recursive_mapping {
     my ( $self, $map, $source_col, $magic_map, $array_ref, $trans ) = @_;
+    $trans .= ',' . $source_col->{att}->{TOINSTANCETYPE};
+
     if ( $source_col->{att}->{TOINSTANCETYPE} eq $self->target ) {
+        $source_col->{att}->{trans} = $trans;
         return $source_col->{att};
     }
 
@@ -138,7 +141,6 @@ sub recursive_mapping {
         $field = $new_field;
     }
 
-    my $types;
     foreach my $next_col (
         $map->findnodes(
             qq{.//CONNECTOR[\@FROMFIELD="$field" 
@@ -148,15 +150,12 @@ and \@FROMINSTANCETYPE="$type"]}
       )
     {
         my $result =
-          $self->recursive_mapping( $map, $next_col, $magic_map, $array_ref,
-            $trans .= "," . $source_col->{att}->{TOINSTANCETYPE} );
-        $trans .= "," . $self->target;
+          $self->recursive_mapping( $map, $next_col, $magic_map, [], $trans );
 
         if ( ref $result eq 'ARRAY' ) {
             $result = $result->[0];
         }
         if ( ref $result eq 'HASH' ) {
-            $result->{trans} = $trans;
             push @{$array_ref}, $result;
         }
     }
