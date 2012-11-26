@@ -72,15 +72,32 @@ sub get_infs {
     my ( $source_type, $target_type ) = ( $self->source, $self->target );
     my @struct;
     foreach my $map (@maps) {
-        my $map_name  = $map->{att}->{NAME};
+        my $map_name = $map->{att}->{NAME};
         my $magic_map = $self->transformation_magic($map);
         push @struct, [ $map_name, @{ $self->mapping( $map, $magic_map ) } ];
     }
     return \@struct;
 }
 
+sub get_workflow {
+    my ( $self, $map_name ) = @_;
+    my ($session) =
+      $self->parser->findnodes(qq{//SESSION[\@MAPPINGNAME="$map_name"]});
+    my $session_name = $session->{att}->{NAME};
+
+    my ($task_inst) =
+      $self->parser->findnodes(
+        qq{//WORKFLOW/TASKINSTANCE[\@NAME="$session_name"]});
+    if ($task_inst) {
+        my ($workflow) = $task_inst->parent;
+        return $workflow->{att}->{NAME};
+    }
+    else { return 'NULL' }
+}
+
 sub mapping {
     my ( $self, $map, $magic_map ) = @_;
+    my $workflow = $self->get_workflow( $map->{att}->{NAME} );
     my @struct;
     my $source_type = $self->source;
     my @source_cols =
@@ -88,7 +105,8 @@ sub mapping {
     foreach my $source_col (@source_cols) {
         my $source = $source_col->{att};
         my $targets =
-          $self->recursive_mapping( $map, $source_col, $magic_map, [] );
+          $self->recursive_mapping( $map, $source_col, $magic_map, [],
+            $self->source );
         foreach my $target ( @{$targets} ) {
             push @struct,
               {
@@ -98,7 +116,9 @@ sub mapping {
                         $map, $source->{FROMFIELD} )
                 },
                 target_physical_column => $target->{TOFIELD},
-                %{ $self->target_struct( $target->{TOINSTANCE}, $map ) }
+                %{ $self->target_struct( $target->{TOINSTANCE}, $map ) },
+                workflow            => $workflow,
+                transformation_rule => $target->{trans},
               };
         }
     }
@@ -106,18 +126,19 @@ sub mapping {
 }
 
 sub recursive_mapping {
-    my ( $self, $map, $source_col, $magic_map, $array_ref ) = @_;
+    my ( $self, $map, $source_col, $magic_map, $array_ref, $trans ) = @_;
     if ( $source_col->{att}->{TOINSTANCETYPE} eq $self->target ) {
         return $source_col->{att};
     }
 
     my ( $field, $inst, $type ) =
-      map { $source_col->{att}->{$_} } qw /TOFIELD TOINSTANCE TOINSTANCETYPE/;
+      map { $source_col->{att}->{$_} } qw/TOFIELD TOINSTANCE TOINSTANCETYPE/;
 
     if ( my $new_field = $magic_map->{$inst}->{$type}->{$field} ) {
         $field = $new_field;
     }
 
+    my $types;
     foreach my $next_col (
         $map->findnodes(
             qq{.//CONNECTOR[\@FROMFIELD="$field" 
@@ -126,11 +147,16 @@ and \@FROMINSTANCETYPE="$type"]}
         )
       )
     {
-        my $result = $self->recursive_mapping( $map, $next_col, $magic_map );
+        my $result =
+          $self->recursive_mapping( $map, $next_col, $magic_map, $array_ref,
+            $trans .= "," . $source_col->{att}->{TOINSTANCETYPE} );
+        $trans .= "," . $self->target;
+
         if ( ref $result eq 'ARRAY' ) {
-            push @{$array_ref}, @{$result};
+            $result = $result->[0];
         }
-        elsif ( ref $result eq 'HASH' ) {
+        if ( ref $result eq 'HASH' ) {
+            $result->{trans} = $trans;
             push @{$array_ref}, $result;
         }
     }
@@ -141,17 +167,13 @@ sub source_struct {
     my ( $self, $inst, $map, $field_name ) = @_;
 
     my $source_type = $self->source;
-    my ($get_real_inst) = $map->findnodes(
-        qq{//INSTANCE[\@NAME="$inst" and \@TRANSFORMATION_TYPE="$source_type"]}
-    );
-    my $real_inst = $get_real_inst->{att}->{TRANSFORMATION_NAME};
-    my ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
-
-    unless ($source) {
-        ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$inst"]});
-    }
+    my $real_inst   = $self->map_instance( $map, $inst, $self->source );
+    my ($source)    = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
 
     my ($column) = $source->findnodes(qq{.//SOURCEFIELD[\@NAME="$field_name"]});
+    if ( !$column ) {
+        ($column) = $source->findnodes(qq{//SOURCEFIELD[\@NAME="$field_name"]});
+    }
     my $table_name = $self->map_instance( $map, $inst, $self->source );
 
     my %struct = (
@@ -190,9 +212,17 @@ sub target_struct {
 
 sub map_instance {
     my ( $self, $map, $inst_name, $type ) = @_;
-    my ($table_name) = $map->findnodes(
-        qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]});
-    return $table_name->{att}->{TRANSFORMATION_NAME};
+    if ( !$self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
+        ->{$type} )
+    {
+        my ($table_name) = $map->findnodes(
+qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]}
+        );
+        $self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
+          ->{$type} = $table_name->{att}->{TRANSFORMATION_NAME};
+    }
+    return $self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
+      ->{$type};
 }
 
 sub target_map {
