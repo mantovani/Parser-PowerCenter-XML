@@ -72,7 +72,8 @@ sub get_infs {
     my ( $source_type, $target_type ) = ( $self->source, $self->target );
     my @struct;
     foreach my $map (@maps) {
-        my $map_name  = $map->{att}->{NAME};
+        my $map_name = $map->{att}->{NAME};
+        next if $map_name !~ /M_REC_TBGW_196DC_AGRPO_PROD_PRIVATE/i;
         my $magic_map = $self->transformation_magic($map);
         push @struct, [ $map_name, @{ $self->mapping( $map, $magic_map ) } ];
     }
@@ -174,16 +175,26 @@ sub source_struct {
         ($column) = $source->findnodes(qq{//SOURCEFIELD[\@NAME="$field_name"]});
     }
     my $table_name = $self->map_instance( $map, $inst, $self->source );
-
-    my %struct = (
-        source_database       => $source->{att}->{DBDNAME},
+    my $source_db  = $self->get_sourcedb($inst);
+    my %struct     = (
+        source_database       => $source_db,
         source_owner          => $source->{att}->{OWNERNAME},
         source_type           => $source->{att}->{DATABASETYPE},
-        source_database       => $source->{att}->{DBDNAME},
         source_datatype       => $column->{att}->{DATATYPE},
         source_physical_table => $table_name
     );
     return \%struct;
+}
+
+sub get_sourcedb {
+    my ( $self, $inst ) = @_;
+    my ($sess) =
+      $self->parser->findnodes(qq{//SESSIONEXTENSION[\@SINSTANCENAME="$inst"]});
+    my $inst_name = $sess->{att}->{DSQINSTNAME};
+    my ($conn) = $self->parser->findnodes(
+        qq{//SESSIONEXTENSION[\@SINSTANCENAME="$inst_name"]/CONNECTIONREFERENCE}
+    );
+    return $conn->{att}->{CONNECTIONNAME};
 }
 
 sub target_struct {
