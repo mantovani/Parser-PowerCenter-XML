@@ -73,7 +73,6 @@ sub get_infs {
     my @struct;
     foreach my $map (@maps) {
         my $map_name = $map->{att}->{NAME};
-        next if $map_name !~ /M_REC_TBGW_196DC_AGRPO_PROD_PRIVATE/i;
         my $magic_map = $self->transformation_magic($map);
         push @struct, [ $map_name, @{ $self->mapping( $map, $magic_map ) } ];
     }
