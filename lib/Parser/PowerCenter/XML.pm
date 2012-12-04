@@ -79,6 +79,17 @@ sub get_infs {
     return \@struct;
 }
 
+sub get_infs_target {
+    my $self = shift;
+    my @maps = $self->get_maps;
+    my @struct;
+    foreach my $map (@maps) {
+        my $map_name = $map->{att}->{NAME};
+        push @struct, [ $map_name, @{ $self->mapping_target($map) } ];
+    }
+    return \@struct;
+}
+
 sub get_workflow {
     my ( $self, $map_name ) = @_;
     my ($session) =
@@ -93,6 +104,24 @@ sub get_workflow {
         return $workflow->{att}->{NAME};
     }
     else { return 'NULL' }
+}
+
+sub mapping_target {
+    my ( $self, $map ) = @_;
+    my $workflow = $self->get_workflow( $map->{att}->{NAME} );
+    my @struct;
+    my $target_type = $self->target;
+    my @target_cols =
+      $map->findnodes(qq{.//CONNECTOR[\@TOINSTANCETYPE="$target_type"]});
+    foreach my $target (@target_cols) {
+        push @struct,
+          {
+            target_physical_column => $target->{att}->{TOFIELD},
+            %{ $self->target_struct( $target->{att}->{TOINSTANCE}, $map ) },
+            workflow => $workflow,
+          };
+    }
+    return \@struct;
 }
 
 sub mapping {
@@ -127,8 +156,8 @@ sub mapping {
 
 sub recursive_mapping {
     my ( $self, $map, $source_col, $magic_map, $array_ref, $trans ) = @_;
+    print Dumper $source_col->{att};
     $trans .= ',' . $source_col->{att}->{TOINSTANCETYPE};
-
     if ( $source_col->{att}->{TOINSTANCETYPE} eq $self->target ) {
         $source_col->{att}->{trans} = $trans;
         return $source_col->{att};
