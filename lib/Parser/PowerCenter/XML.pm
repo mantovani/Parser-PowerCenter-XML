@@ -308,6 +308,7 @@ sub target_struct {
         folder                => $self->get_folder,
         db_type               => $infs->{database},
         conn                  => $infs->{connection},
+        frequency_movement    => $infs->{frequency_movement},
         target_physical_table => $table_name,
         load_program          => $map_name,
     };
@@ -337,9 +338,12 @@ sub target_map {
 qq{.//SESSIONEXTENSION[\@TRANSFORMATIONTYPE="$target_type" and \@SINSTANCENAME="$map_name"]/CONNECTIONREFERENCE}
           );
         if ($meta_infs) {
+            my ($frequency_movement) =
+              grep { $_->{att}->{VALUE} eq 'YES' } $meta_infs->next_siblings;
             return {
-                database   => $meta_infs->{att}->{CONNECTIONSUBTYPE},
-                connection => $meta_infs->{att}->{CONNECTIONNAME}
+                database           => $meta_infs->{att}->{CONNECTIONSUBTYPE},
+                connection         => $meta_infs->{att}->{CONNECTIONNAME},
+                frequency_movement => $frequency_movement->{att}->{NAME},
             };
         }
     }
