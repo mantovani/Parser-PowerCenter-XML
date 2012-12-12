@@ -73,6 +73,7 @@ sub get_infs {
     my @struct;
     foreach my $map (@maps) {
         my $map_name = $map->{att}->{NAME};
+
         #next unless $map_name =~ /M_OS3_MOVE_TABELAS_DIMENSAO/i;
         my $magic_map = $self->transformation_magic($map);
         push @struct, [ $map_name, @{ $self->mapping( $map, $magic_map ) } ];
@@ -294,7 +295,7 @@ sub target_struct {
     my $map_name = $map->{att}->{NAME};
     if ( !$self->cache->{target_struct}->{$map_name}->{$inst} ) {
         $self->cache->{target_struct}->{$map_name}->{$inst}->{infs} =
-          $self->target_map($inst);
+          $self->target_map( $inst, $map );
         $self->cache->{target_struct}->{$map_name}->{$inst}->{table_name} =
           $self->map_instance( $map, $inst, $self->target );
     }
@@ -328,16 +329,20 @@ qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]}
 }
 
 sub target_map {
-    my ( $self, $map_name ) = @_;
+    my ( $self, $map_name, $map ) = @_;
     my $target_type = $self->target;
-    my ($meta_infs) =
-      $self->parser->findnodes(
-qq{//SESSION/SESSIONEXTENSION[\@TRANSFORMATIONTYPE="$target_type" and \@SINSTANCENAME="$map_name"]/CONNECTIONREFERENCE}
-      );
-    return {
-        database   => $meta_infs->{att}->{CONNECTIONSUBTYPE},
-        connection => $meta_infs->{att}->{CONNECTIONNAME}
-    };
+    foreach my $sibling ( $map->next_siblings ) {
+        my ($meta_infs) =
+          $sibling->findnodes(
+qq{.//SESSIONEXTENSION[\@TRANSFORMATIONTYPE="$target_type" and \@SINSTANCENAME="$map_name"]/CONNECTIONREFERENCE}
+          );
+        if ($meta_infs) {
+            return {
+                database   => $meta_infs->{att}->{CONNECTIONSUBTYPE},
+                connection => $meta_infs->{att}->{CONNECTIONNAME}
+            };
+        }
+    }
 }
 
 sub transformation_magic {
