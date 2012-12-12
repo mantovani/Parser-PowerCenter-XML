@@ -72,7 +72,8 @@ sub get_infs {
     my ( $source_type, $target_type ) = ( $self->source, $self->target );
     my @struct;
     foreach my $map (@maps) {
-        my $map_name  = $map->{att}->{NAME};
+        my $map_name = $map->{att}->{NAME};
+        #next unless $map_name =~ /M_OS3_MOVE_TABELAS_DIMENSAO/i;
         my $magic_map = $self->transformation_magic($map);
         push @struct, [ $map_name, @{ $self->mapping( $map, $magic_map ) } ];
     }
@@ -90,12 +91,22 @@ sub get_infs_target {
     return \@struct;
 }
 
+sub get_infs_source {
+    my $self = shift;
+    my @maps = $self->get_maps;
+    my @struct;
+    foreach my $map (@maps) {
+        my $map_name = $map->{att}->{NAME};
+        push @struct, [ $map_name, @{ $self->mapping_source($map) } ];
+    }
+    return \@struct;
+}
+
 sub get_workflow {
     my ( $self, $map_name ) = @_;
     my ($session) =
       $self->parser->findnodes(qq{//SESSION[\@MAPPINGNAME="$map_name"]});
     my $session_name = $session->{att}->{NAME};
-
     my ($task_inst) =
       $self->parser->findnodes(
         qq{//WORKFLOW/TASKINSTANCE[\@NAME="$session_name"]});
@@ -118,6 +129,28 @@ sub mapping_target {
           {
             target_physical_column => $target->{att}->{TOFIELD},
             %{ $self->target_struct( $target->{att}->{TOINSTANCE}, $map ) },
+            workflow => $workflow,
+          };
+    }
+    return \@struct;
+}
+
+sub mapping_source {
+    my ( $self, $map ) = @_;
+    my $workflow = $self->get_workflow( $map->{att}->{NAME} );
+    my @struct;
+    my $source_type = $self->source;
+    my @source_cols =
+      $map->findnodes(qq{.//CONNECTOR[\@FROMINSTANCETYPE="$source_type"]});
+    foreach my $source_col (@source_cols) {
+        my $source = $source_col->{att};
+        push @struct,
+          {
+            source_field => $source->{FROMFIELD},
+            %{
+                $self->source_struct( $source->{FROMINSTANCE},
+                    $map, $source->{FROMFIELD} )
+            },
             workflow => $workflow,
           };
     }
@@ -156,7 +189,6 @@ sub mapping {
 
 sub recursive_mapping {
     my ( $self, $map, $source_col, $magic_map, $array_ref, $trans ) = @_;
-    print Dumper $source_col->{att};
     $trans .= ',' . $source_col->{att}->{TOINSTANCETYPE};
     if ( $source_col->{att}->{TOINSTANCETYPE} eq $self->target ) {
         $source_col->{att}->{trans} = $trans;
@@ -211,13 +243,17 @@ sub source_struct {
         $table_name = $self->map_instance( $map, $inst, $self->source );
     }
 
-    my $source_db = $self->get_sourcedb($inst) || $source->{att}->{DBDNAME};
+    my $source_db = $self->get_sourcedb( $inst, $map )
+      || $source->{att}->{DBDNAME};
     my %struct = (
         source_database       => $source_db,
         source_owner          => $source->{att}->{OWNERNAME},
         source_type           => $source->{att}->{DATABASETYPE},
         source_datatype       => $column->{att}->{DATATYPE},
-        source_physical_table => $table_name
+        source_physical_table => $table_name,
+        repository            => $self->get_repository,
+        folder                => $self->get_folder,
+        load_program          => $map->{att}->{NAME},
     );
     return \%struct;
 }
@@ -231,15 +267,26 @@ qq{//SESSIONEXTENSION[\@SINSTANCENAME="$inst"]//ATTRIBUTE[\@NAME="Source filenam
 }
 
 sub get_sourcedb {
-    my ( $self, $inst ) = @_;
-    my ($sess) =
-      $self->parser->findnodes(qq{//SESSIONEXTENSION[\@SINSTANCENAME="$inst"]});
-    my $inst_name = $sess->{att}->{DSQINSTNAME};
+    my ( $self, $inst, $map ) = @_;
+    my $inst_name;
+    foreach my $sibling ( $map->next_siblings ) {
+        ($inst_name) = $sibling->findnodes(
+qq{.//SESSIONEXTENSION[\@SINSTANCENAME="$inst" and \@NAME="Relational Reader"]}
+        );
+        last if $inst_name;
+    }
+
+    $inst_name = $inst_name->{att}->{DSQINSTNAME};
     return unless $inst_name;
-    my ($conn) = $self->parser->findnodes(
-        qq{//SESSIONEXTENSION[\@SINSTANCENAME="$inst_name"]/CONNECTIONREFERENCE}
-    );
-    return $conn->{att}->{CONNECTIONNAME};
+
+    foreach my $sibling ( $map->next_siblings ) {
+        my ($conns) = $sibling->findnodes(
+qq{.//SESSIONEXTENSION[\@SINSTANCENAME="$inst_name" and \@TRANSFORMATIONTYPE="Source Qualifier"]/CONNECTIONREFERENCE}
+        );
+        if ($conns) {
+            return $conns->{att}->{CONNECTIONNAME};
+        }
+    }
 }
 
 sub target_struct {
