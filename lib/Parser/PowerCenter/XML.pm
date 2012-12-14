@@ -73,8 +73,7 @@ sub get_infs {
     my @struct;
     foreach my $map (@maps) {
         my $map_name = $map->{att}->{NAME};
-
-        #    next if $map_name !~ /M_TBVRDD_TIPO_DOCUMENTO/i;
+        #next if $map_name !~ /M_PROCESSO_GENERICO/i;
         my $magic_map = $self->transformation_magic($map);
         push @struct, [ $map_name, @{ $self->mapping( $map, $magic_map ) } ];
     }
@@ -107,19 +106,52 @@ sub get_workflow {
     my ( $self, $map_name, $map ) = @_;
 
     my ($session);
+
     foreach my $sibling ( $map->next_siblings ) {
         if (   $sibling->tag eq 'SESSION'
             && $sibling->{att}->{MAPPINGNAME} eq $map_name )
         {
-            ($session) = $sibling;
+            $session = $sibling;
             last;
         }
     }
-    return 'NULL' unless $session;
+
+    unless ($session) {
+        foreach my $sibling ( $map->next_siblings ) {
+            if (
+                $sibling->findnodes(qq{.//SESSION[\@MAPPINGNAME="$map_name"]}) )
+            {
+                if ( $sibling->tag eq 'WORKFLOW' ) {
+                    return $sibling->{att}->{NAME};
+                }
+                else {
+                    my $worklet = $sibling->{att}->{NAME};
+                    foreach my $new_sibling ( $map->next_siblings ) {
+                        if (
+                            my ($task_inst_worklet) = $new_sibling->findnodes(
+                                qq{.//TASKINSTANCE[\@TASKNAME="$worklet"]})
+                          )
+                        {
+                            return $task_inst_worklet->parent->{att}->{NAME};
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     my $session_name = $session->{att}->{NAME};
 
-    my ($task_inst) =
-      $map->findnodes(qq{//TASKINSTANCE[\@TASKNAME="$session_name"]});
+    my ($task_inst);
+    foreach my $sibling ( $map->next_siblings ) {
+        ($task_inst) =
+          $sibling->findnodes(qq{.//TASKINSTANCE[\@TASKNAME="$session_name"]});
+        last if $task_inst;
+    }
+
+    unless ($task_inst) {
+        return 'NULL';
+    }
 
     if ($task_inst) {
         my ($work) = $task_inst->parent;
@@ -133,8 +165,6 @@ sub get_workflow {
             return $task_inst_worklet->parent->{att}->{NAME};
         }
     }
-
-    return 'NULL';
 }
 
 sub mapping_target {
@@ -258,6 +288,10 @@ sub source_struct {
             ($source) = $sibling;
             last if $source;
         }
+    }
+
+    unless ($source) {
+        ($source) = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
     }
 
     my ($column) = $source->findnodes(qq{.//SOURCEFIELD[\@NAME="$field_name"]});
