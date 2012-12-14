@@ -74,7 +74,7 @@ sub get_infs {
     foreach my $map (@maps) {
         my $map_name = $map->{att}->{NAME};
 
-        #next unless $map_name =~ /M_OS3_MOVE_TABELAS_DIMENSAO/i;
+        #    next if $map_name !~ /M_TBVRDD_TIPO_DOCUMENTO/i;
         my $magic_map = $self->transformation_magic($map);
         push @struct, [ $map_name, @{ $self->mapping( $map, $magic_map ) } ];
     }
@@ -104,23 +104,42 @@ sub get_infs_source {
 }
 
 sub get_workflow {
-    my ( $self, $map_name ) = @_;
-    my ($session) =
-      $self->parser->findnodes(qq{//SESSION[\@MAPPINGNAME="$map_name"]});
-    my $session_name = $session->{att}->{NAME};
-    my ($task_inst) =
-      $self->parser->findnodes(
-        qq{//WORKFLOW/TASKINSTANCE[\@NAME="$session_name"]});
-    if ($task_inst) {
-        my ($workflow) = $task_inst->parent;
-        return $workflow->{att}->{NAME};
+    my ( $self, $map_name, $map ) = @_;
+
+    my ($session);
+    foreach my $sibling ( $map->next_siblings ) {
+        if (   $sibling->tag eq 'SESSION'
+            && $sibling->{att}->{MAPPINGNAME} eq $map_name )
+        {
+            ($session) = $sibling;
+            last;
+        }
     }
-    else { return 'NULL' }
+    return 'NULL' unless $session;
+    my $session_name = $session->{att}->{NAME};
+
+    my ($task_inst) =
+      $map->findnodes(qq{//TASKINSTANCE[\@TASKNAME="$session_name"]});
+
+    if ($task_inst) {
+        my ($work) = $task_inst->parent;
+        if ( $work->tag eq 'WORKFLOW' ) {
+            return $work->{att}->{NAME};
+        }
+        else {
+            my $worklet = $work->{att}->{NAME};
+            my ($task_inst_worklet) =
+              $map->findnodes(qq{//TASKINSTANCE[\@TASKNAME="$worklet"]});
+            return $task_inst_worklet->parent->{att}->{NAME};
+        }
+    }
+
+    return 'NULL';
 }
 
 sub mapping_target {
     my ( $self, $map ) = @_;
-    my $workflow = $self->get_workflow( $map->{att}->{NAME} );
+    my $workflow = $self->get_workflow( $map->{att}->{NAME}, $map );
     my @struct;
     my $target_type = $self->target;
     my @target_cols =
@@ -138,7 +157,7 @@ sub mapping_target {
 
 sub mapping_source {
     my ( $self, $map ) = @_;
-    my $workflow = $self->get_workflow( $map->{att}->{NAME} );
+    my $workflow = $self->get_workflow( $map->{att}->{NAME}, $map );
     my @struct;
     my $source_type = $self->source;
     my @source_cols =
@@ -160,7 +179,7 @@ sub mapping_source {
 
 sub mapping {
     my ( $self, $map, $magic_map ) = @_;
-    my $workflow = $self->get_workflow( $map->{att}->{NAME} );
+    my $workflow = $self->get_workflow( $map->{att}->{NAME}, $map );
     my @struct;
     my $source_type = $self->source;
     my @source_cols =
@@ -228,8 +247,18 @@ sub source_struct {
     my ( $self, $inst, $map, $field_name ) = @_;
 
     my $source_type = $self->source;
-    my $real_inst   = $self->map_instance( $map, $inst, $self->source );
-    my ($source)    = $map->findnodes(qq{//SOURCE[\@NAME="$real_inst"]});
+    my $real_inst = $self->map_instance( $map, $inst, $self->source );
+
+    my $source;
+
+    foreach my $sibling ( reverse $map->prev_siblings ) {
+        if (   $sibling->tag eq 'SOURCE'
+            && $sibling->{att}->{NAME} eq $real_inst )
+        {
+            ($source) = $sibling;
+            last if $source;
+        }
+    }
 
     my ($column) = $source->findnodes(qq{.//SOURCEFIELD[\@NAME="$field_name"]});
     if ( !$column ) {
@@ -319,11 +348,18 @@ sub map_instance {
     if ( !$self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
         ->{$type} )
     {
-        my ($table_name) = $map->findnodes(
-qq{//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]}
-        );
-        $self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
-          ->{$type} = $table_name->{att}->{TRANSFORMATION_NAME};
+        my ($table_name);
+        foreach my $sibling ( $map->next_siblings ) {
+            ($table_name) = $map->findnodes(
+qq{.//INSTANCE[\@NAME="$inst_name" and \@TRANSFORMATION_TYPE="$type"]}
+            );
+            if ($sibling) {
+                $self->cache->{map_instance}->{ $map->{att}->{NAME} }
+                  ->{$inst_name}->{$type} =
+                  $table_name->{att}->{TRANSFORMATION_NAME};
+                last;
+            }
+        }
     }
     return $self->cache->{map_instance}->{ $map->{att}->{NAME} }->{$inst_name}
       ->{$type};
@@ -338,12 +374,16 @@ sub target_map {
 qq{.//SESSIONEXTENSION[\@TRANSFORMATIONTYPE="$target_type" and \@SINSTANCENAME="$map_name"]/CONNECTIONREFERENCE}
           );
         if ($meta_infs) {
-            my ($frequency_movement) =
-              grep { $_->{att}->{VALUE} eq 'YES' } $meta_infs->next_siblings;
+            my $frequency_movement = join '|', map { $_->{att}->{NAME} }
+              grep {
+                     $_->{att}->{NAME}
+                  && $_->{att}->{VALUE}
+                  && $_->{att}->{VALUE} eq 'YES'
+              } $meta_infs->next_siblings;
             return {
                 database           => $meta_infs->{att}->{CONNECTIONSUBTYPE},
                 connection         => $meta_infs->{att}->{CONNECTIONNAME},
-                frequency_movement => $frequency_movement->{att}->{NAME},
+                frequency_movement => $frequency_movement,
             };
         }
     }
